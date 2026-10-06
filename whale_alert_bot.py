@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import time
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ HL_WS_URL = os.getenv("HL_WS_URL", "wss://api.hyperliquid.xyz/ws")
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 HL_CHART_URL_TEMPLATE = os.getenv("HL_CHART_URL_TEMPLATE", "https://app.hyperliquid.xyz/trade/{coin}")
 HYPERDASH_REVIEW_URL = "https://hyperdash.com/"
+ERROR_NOTIFY_COOLDOWN_SECONDS = int(os.getenv("ERROR_NOTIFY_COOLDOWN_SECONDS", "300"))
 
 FIXED_THRESHOLDS = {
     "BTC": Decimal("5000000"),
@@ -128,6 +130,34 @@ class HyperliquidClient:
                 raise RuntimeError(f"Telegram send failed ({r.status}): {body[:500]}")
 
 
+class ErrorNotifier:
+    """Log failures and optionally notify Telegram without creating an alert loop."""
+
+    def __init__(self, client: HyperliquidClient, token: str, chat_id: str, dry_run: bool):
+        self.client = client
+        self.token = token
+        self.chat_id = chat_id
+        self.dry_run = dry_run
+        self.last_sent: dict[str, float] = {}
+
+    async def report(self, kind: str, exc: BaseException, wallet: str | None = None) -> None:
+        context = f" wallet={wallet}" if wallet else ""
+        LOG.error("%s%s: %s", kind, context, exc, exc_info=True)
+        if self.dry_run or not self.chat_id:
+            return
+        now = time.monotonic()
+        if now - self.last_sent.get(kind, 0) < ERROR_NOTIFY_COOLDOWN_SECONDS:
+            LOG.info("Suppressed duplicate Telegram error notification: %s", kind)
+            return
+        message = f"Whale alert bot error\nType: {kind}{context}\nDetails: {str(exc)[:500]}"
+        try:
+            await self.client.send_telegram(self.token, self.chat_id, message)
+            self.last_sent[kind] = now
+        except Exception as notify_exc:
+            # Never recurse: Telegram failure is recorded locally only.
+            LOG.error("Could not send Telegram error notification: %s", notify_exc, exc_info=True)
+
+
 def format_alert(alert: Alert) -> str:
     ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(alert.timestamp_ms / 1000))
     review = HYPERDASH_REVIEW_URL  # manual review only; do not automate Hyperdash.
@@ -162,6 +192,7 @@ async def watch_wallet(
     chat_id: str,
     seen: set[tuple[str, str]],
     dry_run: bool,
+    notifier: ErrorNotifier,
 ) -> None:
     while True:
         try:
@@ -188,28 +219,52 @@ async def watch_wallet(
                             await client.send_telegram(token, chat_id, text, alert_keyboard(alert))
                             LOG.info("Sent alert for %s %s", wallet, alert.tid)
         except (OSError, asyncio.TimeoutError, websockets.WebSocketException, json.JSONDecodeError) as exc:
-            LOG.warning("%s disconnected: %s; retrying in 5s", wallet, exc)
+            await notifier.report("wallet_stream", exc, wallet)
+            LOG.warning("%s disconnected; retrying in 5s", wallet)
             await asyncio.sleep(5)
 
 
 async def main() -> None:
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
+    log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    log_file = os.getenv("LOG_FILE", "whale_alert_bot.log")
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    stream = logging.StreamHandler()
+    stream.setFormatter(formatter)
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes=int(os.getenv("LOG_MAX_BYTES", "10485760")),
+        backupCount=int(os.getenv("LOG_BACKUPS", "5")),
+    )
+    file_handler.setFormatter(formatter)
+    LOG.setLevel(log_level)
+    LOG.addHandler(stream)
+    LOG.addHandler(file_handler)
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    error_chat_id = os.getenv("ERROR_NOTIFY_CHAT_ID", chat_id)
     wallets = parse_addresses(os.environ["HL_WHALE_ADDRESSES"])
     if not wallets:
         raise RuntimeError("Set HL_WHALE_ADDRESSES to one or more Hyperliquid wallet addresses")
     dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
     async with aiohttp.ClientSession() as session:
         client = HyperliquidClient(session)
-        await client.refresh_day_volumes()
+        notifier = ErrorNotifier(client, token, error_chat_id, dry_run)
+        try:
+            await client.refresh_day_volumes()
+        except Exception as exc:
+            await notifier.report("market_metadata", exc)
+            raise
         while True:
             try:
-                await asyncio.gather(*(watch_wallet(client, w, token, chat_id, set(), dry_run) for w in wallets))
-            except Exception:
-                LOG.exception("Watcher group failed; refreshing volumes in 30s")
+                await asyncio.gather(*(watch_wallet(client, w, token, chat_id, set(), dry_run, notifier) for w in wallets))
+            except Exception as exc:
+                await notifier.report("watcher_group", exc)
+                LOG.warning("Refreshing volumes in 30s")
                 await asyncio.sleep(30)
-                await client.refresh_day_volumes()
+                try:
+                    await client.refresh_day_volumes()
+                except Exception as refresh_exc:
+                    await notifier.report("market_metadata", refresh_exc)
 
 
 if __name__ == "__main__":

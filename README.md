@@ -37,6 +37,19 @@ python whale_alert_bot.py
 
 The bot token must never be committed or pasted into source control. The Telegram bot must first receive `/start` from the target chat. Use a numeric `chat.id` for `TELEGRAM_CHAT_ID`.
 
+## Logging and error notifications
+
+The service writes logs to both stdout and a rotating file (`whale_alert_bot.log` by default). Configure rotation with:
+
+```bash
+export LOG_FILE='whale_alert_bot.log'
+export LOG_MAX_BYTES=10485760
+export LOG_BACKUPS=5
+export LOG_LEVEL=INFO
+```
+
+Unexpected wallet-stream, metadata, watcher, and Telegram-delivery failures are logged with traceback context. A rate-limited error message is sent to `ERROR_NOTIFY_CHAT_ID` (defaulting to `TELEGRAM_CHAT_ID`). Set `ERROR_NOTIFY_COOLDOWN_SECONDS` to change the per-error-type cooldown. If Telegram is unavailable, the failure is recorded locally and is not retried recursively.
+
 ## Telegram inline buttons
 
 Each alert includes:
