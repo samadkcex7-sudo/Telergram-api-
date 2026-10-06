@@ -31,11 +31,26 @@ Set values in the environment (or export them in the shell):
 export TELEGRAM_BOT_TOKEN='token-from-BotFather'
 export TELEGRAM_CHAT_ID='your-numeric-chat-id'
 export HL_WHALE_ADDRESSES='0xabc...,0xdef...'
+export WATCHLIST_FILE='watchlist.json'
 export DRY_RUN=false
 python whale_alert_bot.py
 ```
 
 The bot token must never be committed or pasted into source control. The Telegram bot must first receive `/start` from the target chat. Use a numeric `chat.id` for `TELEGRAM_CHAT_ID`.
+
+## Manage addresses from Telegram
+
+Only the configured `TELEGRAM_CHAT_ID` can change the watchlist. Send any of these messages to the bot:
+
+```text
+0x0123456789012345678901234567890123456789
+/add 0x0123456789012345678901234567890123456789
+/list
+/remove 0x0123456789012345678901234567890123456789
+/help
+```
+
+Addresses are validated as 42-character hexadecimal `0x...` master-wallet addresses, persisted atomically in `WATCHLIST_FILE`, and started/stopped live without restarting the service. Messages from other chats are ignored and logged. In `DRY_RUN=true`, addresses are still processed but confirmation replies are not sent.
 
 ## Logging and error notifications
 

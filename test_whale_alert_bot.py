@@ -1,5 +1,5 @@
 from decimal import Decimal
-from whale_alert_bot import alert_keyboard, classify_fill
+from whale_alert_bot import WatchlistStore, alert_keyboard, classify_fill, parse_addresses
 
 
 def test_btc_fixed_threshold():
@@ -28,3 +28,12 @@ def test_keyboard_opens_asset_chart():
     keyboard = alert_keyboard(alert)
     assert keyboard["inline_keyboard"][0][0]["url"] == "https://app.hyperliquid.xyz/trade/BTC"
     assert keyboard["inline_keyboard"][1][0]["url"] == "https://hyperdash.com/"
+
+
+def test_watchlist_accepts_valid_addresses_and_persists(tmp_path):
+    address = "0x0123456789012345678901234567890123456789"
+    store = WatchlistStore(str(tmp_path / "watchlist.json"), parse_addresses(address))
+    assert address in store.addresses
+    assert store.add([address]) == []
+    assert store.remove([address]) == [address]
+    assert address not in store.addresses
