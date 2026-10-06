@@ -1,0 +1,22 @@
+services:
+  whale-alert-bot:
+    build: .
+    image: hyperliquid-whale-alert-bot:latest
+    container_name: hyperliquid-whale-alert-bot
+    restart: "no"
+    init: true
+    env_file:
+      - /etc/hyperliquid-whale-alert/.env
+    environment:
+      WATCHLIST_FILE: /data/watchlist.json
+      LOG_FILE: /data/whale_alert_bot.log
+    volumes:
+      - whale-alert-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  whale-alert-data:

@@ -92,3 +92,33 @@ export HL_CHART_URL_TEMPLATE='https://app.hyperliquid.xyz/trade/{coin}'
 ```bash
 pytest -q
 ```
+
+## Docker and systemd deployment
+
+The repository includes `Dockerfile`, `docker-compose.yml`, `hyperliquid-whale-alert.service`, and `deploy_cloud.sh` for Ubuntu 24.04. The service stores the Telegram-managed watchlist and rotating logs in a persistent Docker volume and starts automatically after reboot.
+
+On the cloud server:
+
+```bash
+sudo mkdir -p /etc/hyperliquid-whale-alert
+sudo install -m 600 /dev/null /etc/hyperliquid-whale-alert/.env
+sudo editor /etc/hyperliquid-whale-alert/.env
+```
+
+Set at minimum:
+
+```text
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+HL_WHALE_ADDRESSES=
+DRY_RUN=false
+```
+
+Then run:
+
+```bash
+sudo REPO_URL=https://github.com/samadkcex7-sudo/Telergram-api-.git ./deploy_cloud.sh
+sudo journalctl -u hyperliquid-whale-alert.service -f
+```
+
+The deployment script installs Docker if needed, clones or updates `/opt/hyperliquid-whale-alert`, installs the systemd unit, and enables it at boot. Do not place the Telegram token in Git. On a managed cloud computer, keep the default restrictive UFW policy; this bot needs no inbound port because it uses Telegram long polling and outbound Hyperliquid WebSocket traffic.

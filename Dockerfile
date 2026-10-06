@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY whale_alert_bot.py .
+
+RUN useradd --create-home --uid 10001 bot && mkdir -p /data && chown -R bot:bot /app /data
+USER bot
+
+VOLUME ["/data"]
+CMD ["python", "-u", "whale_alert_bot.py"]
