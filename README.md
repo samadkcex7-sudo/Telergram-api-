@@ -37,6 +37,19 @@ python whale_alert_bot.py
 
 The bot token must never be committed or pasted into source control. The Telegram bot must first receive `/start` from the target chat. Use a numeric `chat.id` for `TELEGRAM_CHAT_ID`.
 
+## Telegram inline buttons
+
+Each alert includes:
+
+- **Open `<asset>` chart** — opens the asset-specific Hyperliquid trading chart.
+- **Open Hyperdash (manual)** — opens Hyperdash for manual review only; the bot does not scrape or automate it.
+
+The chart URL can be changed with `HL_CHART_URL_TEMPLATE`; use `{coin}` as the placeholder:
+
+```bash
+export HL_CHART_URL_TEMPLATE='https://app.hyperliquid.xyz/trade/{coin}'
+```
+
 ## Behavior
 
 - Subscribes to Hyperliquid `userFills` for each configured wallet.
@@ -44,7 +57,7 @@ The bot token must never be committed or pasted into source control. The Telegra
 - Alerts only fills whose direction begins with `Open Long` or `Open Short`.
 - Deduplicates by wallet and fill ID for the current process lifetime.
 - Reconnects after a WebSocket interruption.
-- `DRY_RUN=true` logs alerts without sending Telegram messages.
+- `DRY_RUN=true` logs alerts and the generated inline keyboard without sending Telegram messages.
 
 ## Test
 

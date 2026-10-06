@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 import websockets
@@ -22,6 +23,8 @@ LOG = logging.getLogger("whale-alert")
 HL_INFO_URL = os.getenv("HL_INFO_URL", "https://api.hyperliquid.xyz/info")
 HL_WS_URL = os.getenv("HL_WS_URL", "wss://api.hyperliquid.xyz/ws")
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
+HL_CHART_URL_TEMPLATE = os.getenv("HL_CHART_URL_TEMPLATE", "https://app.hyperliquid.xyz/trade/{coin}")
+HYPERDASH_REVIEW_URL = "https://hyperdash.com/"
 
 FIXED_THRESHOLDS = {
     "BTC": Decimal("5000000"),
@@ -114,9 +117,12 @@ class HyperliquidClient:
             self.day_volume[coin] = dec(ctx.get("dayNtlVlm"))
         LOG.info("Loaded 24h notional volume for %d assets", len(self.day_volume))
 
-    async def send_telegram(self, token: str, chat_id: str, text: str) -> None:
+    async def send_telegram(self, token: str, chat_id: str, text: str, reply_markup: dict[str, Any] | None = None) -> None:
         url = TELEGRAM_API.format(token=token, method="sendMessage")
-        async with self.session.post(url, json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True}) as r:
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        async with self.session.post(url, json=payload) as r:
             body = await r.text()
             if r.status >= 300:
                 raise RuntimeError(f"Telegram send failed ({r.status}): {body[:500]}")
@@ -124,7 +130,7 @@ class HyperliquidClient:
 
 def format_alert(alert: Alert) -> str:
     ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(alert.timestamp_ms / 1000))
-    review = f"https://hyperdash.com/"  # manual review only; do not automate Hyperdash.
+    review = HYPERDASH_REVIEW_URL  # manual review only; do not automate Hyperdash.
     return (
         f"WHALE POSITION ALERT\n"
         f"{alert.coin} — {alert.direction}\n"
@@ -135,6 +141,18 @@ def format_alert(alert: Alert) -> str:
         f"Time: {ts}\n"
         f"Review manually: {review}"
     )
+
+
+def alert_keyboard(alert: Alert) -> dict[str, list[list[dict[str, str]]]]:
+    """Build safe URL buttons; buttons only open pages and never place trades."""
+    coin_path = quote(alert.coin, safe=":@._-")
+    chart_url = HL_CHART_URL_TEMPLATE.format(coin=coin_path)
+    return {
+        "inline_keyboard": [
+            [{"text": f"Open {alert.coin} chart", "url": chart_url}],
+            [{"text": "Open Hyperdash (manual)", "url": HYPERDASH_REVIEW_URL}],
+        ]
+    }
 
 
 async def watch_wallet(
@@ -165,9 +183,9 @@ async def watch_wallet(
                         seen.add((wallet, alert.tid))
                         text = format_alert(alert)
                         if dry_run:
-                            LOG.info("DRY RUN\n%s", text)
+                            LOG.info("DRY RUN\n%s\nKeyboard: %s", text, alert_keyboard(alert))
                         else:
-                            await client.send_telegram(token, chat_id, text)
+                            await client.send_telegram(token, chat_id, text, alert_keyboard(alert))
                             LOG.info("Sent alert for %s %s", wallet, alert.tid)
         except (OSError, asyncio.TimeoutError, websockets.WebSocketException, json.JSONDecodeError) as exc:
             LOG.warning("%s disconnected: %s; retrying in 5s", wallet, exc)
